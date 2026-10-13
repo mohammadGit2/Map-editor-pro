@@ -1,0 +1,40 @@
+{
+  "name": "atlas-forge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "test:browser": "python3 tests/browser.py",
+    "dev:netlify": "netlify dev --offline --no-open",
+    "functions:serve": "netlify functions:serve --offline --functions netlify/functions --port 9999",
+    "functions:build": "netlify functions:build --src netlify/functions --functions .netlify/functions-build",
+    "format:check": "prettier --check src netlify tests/*.ts README.md package.json tsconfig.json vite.config.ts index.html .github/workflows/ci.yml",
+    "test:functions": "node tests/functions-smoke.mjs"
+  },
+  "dependencies": {
+    "d3-delaunay": "^6.0.4",
+    "lucide-react": "^0.468.0",
+    "polygon-clipping": "^0.15.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@netlify/functions": "6.0.2",
+    "@types/d3-delaunay": "^6.0.4",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "netlify-cli": "27.12.0",
+    "prettier": "^3.6.2",
+    "typescript": "~5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

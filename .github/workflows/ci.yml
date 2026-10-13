@@ -1,0 +1,38 @@
+name: Validate Atlas Forge
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+      - run: npm run functions:build
+      - name: Test Netlify function runtime
+        run: |
+          setsid npm run functions:serve > "$RUNNER_TEMP/atlas-functions.log" 2>&1 &
+          ATLAS_FUNCTION_PROCESS=$!
+          trap 'kill -- -"$ATLAS_FUNCTION_PROCESS" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9999/.netlify/functions/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if ! npm run test:functions; then
+            cat "$RUNNER_TEMP/atlas-functions.log"
+            exit 1
+          fi
