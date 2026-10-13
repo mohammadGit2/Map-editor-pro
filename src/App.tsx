@@ -12,6 +12,8 @@ import {
   ArrowUp,
   ArrowUpRight,
   BookOpen,
+  Brush,
+  Eraser,
   Castle,
   Check,
   CheckCheck,
@@ -72,6 +74,7 @@ import {
   type History,
   type Country,
   type Style,
+  type MapAppearance,
   clone,
   uid,
   palette,
@@ -102,8 +105,27 @@ import {
   pointInside,
 } from "./model";
 import { sampleProject } from "./sample";
-import MapCanvas, { MapContent, themes } from "./MapCanvas";
+import MapCanvas, { MapContent } from "./MapCanvas";
 import { generateWorld, checkProject } from "./api";
+import { PaintRibbon, WorldSettings, BorderControls } from "./WorldControls";
+import {
+  appearance,
+  displayScale,
+  canvasBounds,
+  canvasSettings,
+  resizeCanvas,
+  growCanvas,
+  fitCanvasToContent,
+  addLand,
+  eraseLand,
+  strokeGeometry,
+  drawTerritory,
+  rulerId,
+  descendants,
+  setRealmParent,
+  uniteRealms,
+  dissolveRealm,
+} from "./world";
 
 const toolGroups: {
   tool: Tool;
@@ -116,6 +138,10 @@ const toolGroups: {
     { tool: "pan", name: "Pan", icon: Hand, key: "H" },
   ],
   [
+    { tool: "brush", name: "Land brush", icon: Brush },
+    { tool: "land-erase", name: "Land eraser", icon: Eraser },
+    { tool: "paint", name: "Fill color", icon: PaintBucket },
+    { tool: "assign", name: "Give territory", icon: Flag },
     { tool: "land", name: "Draw land", icon: Pencil, key: "B" },
     { tool: "territory", name: "Draw territory", icon: Spline, key: "P" },
     { tool: "vertex", name: "Edit vertices", icon: MousePointer2, key: "A" },
@@ -145,6 +171,7 @@ const styleNames: Record<Style, string> = {
   blueprint: "Celestial blueprint",
 };
 type Modal =
+  | "custom"
   | "projects"
   | "new"
   | "export"
@@ -172,14 +199,19 @@ const objectIcons: Record<string, LucideIcon> = {
 };
 
 function Thumbnail({ world }: { world: World }) {
+  const b = canvasBounds(world),
+    t = appearance(world);
   return (
-    <svg viewBox="100 100 1000 580" className="map-thumbnail">
+    <svg
+      viewBox={`${b[0]} ${b[1]} ${b[2] - b[0]} ${b[3] - b[1]}`}
+      className="map-thumbnail"
+    >
       <rect
-        x="0"
-        y="0"
-        width="1200"
-        height="820"
-        fill={themes[world.style].ocean}
+        x={b[0]}
+        y={b[1]}
+        width={b[2] - b[0]}
+        height={b[3] - b[1]}
+        fill={t.ocean}
       />
       {world.lands.map((l) => (
         <path
@@ -191,7 +223,7 @@ function Thumbnail({ world }: { world: World }) {
                 .join(""),
             )
             .join("")}
-          fill={themes[world.style].land}
+          fill={l.color || t.land}
           stroke="#7c836d"
           strokeWidth="5"
         />
@@ -206,7 +238,10 @@ function Thumbnail({ world }: { world: World }) {
                 .join(""),
             )
             .join("")}
-          fill={world.countries.find((c) => c.id === p.countryId)?.color}
+          fill={
+            world.countries.find((c) => c.id === rulerId(world, p.countryId))
+              ?.color
+          }
           stroke="#676b58"
           strokeWidth="2"
         />
@@ -249,6 +284,11 @@ function Dialog({
       dialog?.querySelector<HTMLElement>("button")
     )?.focus();
     const key = (e: KeyboardEvent) => {
+      if (
+        Array.from(document.querySelectorAll('[role="dialog"]')).at(-1) !==
+        dialog
+      )
+        return;
       if (e.key === "Escape") {
         e.stopPropagation();
         onCloseRef.current();
@@ -347,8 +387,12 @@ export default function App() {
     future: [],
     entries: [],
   });
+  const historyRef = useRef(history);
+  historyRef.current = history;
   const project = history.current,
     world = project.world;
+  const canvas = canvasSettings(world),
+    theme = appearance(world);
   const [tool, setTool] = useState<Tool>("select"),
     [selected, setSelected] = useState<Selected[]>([]),
     [selectedCountry, setSelectedCountry] = useState<string | null>(null);
@@ -364,13 +408,13 @@ export default function App() {
       initialError.current ? "Recovery needed" : "All changes saved",
     ),
     [brushSize, setBrushSize] = useState(1),
-    [advanced, setAdvanced] = useState(true),
+    [advanced, setAdvanced] = useState(false),
     [coordinates, setCoordinates] = useState<Point>([0, 0]);
   const [activeView, setActiveView] = useState("world"),
     [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800),
     [search, setSearch] = useState(""),
     [newName, setNewName] = useState("My untold world"),
-    [newTemplate, setNewTemplate] = useState("sample");
+    [newTemplate, setNewTemplate] = useState("blank");
   const [expandedLayer, setExpandedLayer] = useState<string | null>(null),
     [exportFormat, setExportFormat] = useState("png"),
     [exportScale, setExportScale] = useState(2),
@@ -390,6 +434,22 @@ export default function App() {
     toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
     saveFailed = useRef(!!initialError.current);
   const [creating, setCreating] = useState(false);
+  const [newWidth, setNewWidth] = useState("2000"),
+    [newHeight, setNewHeight] = useState("1200"),
+    [newGrow, setNewGrow] = useState(true),
+    [newContinents, setNewContinents] = useState(3),
+    [newInitialCountries, setNewInitialCountries] = useState(5);
+  const [paintColor, setPaintColor] = useState("#e5dfca"),
+    [colorChosen, setColorChosen] = useState(false),
+    [brushDiameter, setBrushDiameter] = useState(32),
+    [brushCountry, setBrushCountry] = useState("");
+  const [newGovernment, setNewGovernment] = useState("Kingdom"),
+    [newMembers, setNewMembers] = useState<string[]>([]);
+  const [dissolveTarget, setDissolveTarget] = useState("");
+  useEffect(() => {
+    if (!world.countries.some((c) => c.id === brushCountry))
+      setBrushCountry(world.countries[0]?.id || "");
+  }, [world.countries, brushCountry]);
   const createRequest = useRef(0);
   const notify = useCallback((text: string, error = false) => {
     setToast({ text, error });
@@ -398,14 +458,19 @@ export default function App() {
   }, []);
   const change = useCallback(
     (label: string, apply: (p: Project) => Project) => {
-      setHistory((h) => {
-        try {
-          return commit(h, apply(clone(h.current)), label);
-        } catch (e) {
-          notify((e as Error).message, true);
-          return h;
-        }
-      });
+      try {
+        // Execute edits once per action. Generating IDs or selection inside a
+        // React state updater can run twice in StrictMode and desynchronize IDs.
+        const next = commit(
+          historyRef.current,
+          apply(clone(historyRef.current.current)),
+          label,
+        );
+        historyRef.current = next;
+        setHistory(next);
+      } catch (e) {
+        notify((e as Error).message, true);
+      }
     },
     [notify],
   );
@@ -485,12 +550,27 @@ export default function App() {
     try {
       const result =
         newTemplate === "generate"
-          ? await generateWorld(Date.now() % 100000, newName.trim())
+          ? await generateWorld(Date.now() % 100000, newName.trim(), {
+              width: Number(newWidth),
+              height: Number(newHeight),
+              continents: newContinents,
+              countries: newInitialCountries,
+            })
           : null;
       if (createRequest.current !== request) return;
       const p =
         result?.project ||
-        (newTemplate === "blank" ? blankProject() : sampleProject());
+        (newTemplate === "blank"
+          ? blankProject(newName.trim() || "My world", {
+              width: Number(newWidth),
+              height: Number(newHeight),
+              grow: newGrow,
+            })
+          : sampleProject());
+      if (newTemplate !== "sample") {
+        p.world = resizeCanvas(p.world, Number(newWidth), Number(newHeight));
+        p.world.canvas = { ...canvasSettings(p.world), grow: newGrow };
+      }
       p.name = newName.trim() || p.name;
       load(p);
       notify(
@@ -541,7 +621,7 @@ export default function App() {
         id,
         name: newCountry.trim() || "New kingdom",
         color: newCountryColor,
-        government: "Kingdom",
+        government: newGovernment,
         ruler: "",
         capital: "",
         description: "",
@@ -556,7 +636,15 @@ export default function App() {
             p.countryId = id;
           }
         });
+      for (const member of newMembers) {
+        const c = w.countries.find((c) => c.id === member);
+        if (c) c.parentId = id;
+      }
+      if (newGovernment === "Empire") w.politicalView = "empires";
+      setBrushCountry(id);
+      setNewMembers([]);
       setSelectedCountry(id);
+      setSelected([]);
       return w;
     });
     setModal(null);
@@ -598,6 +686,63 @@ export default function App() {
     setSelected([]);
   }, [selected, change]);
   const onSelect = (s: Selected | null, shift = false) => {
+    if (s && tool === "paint") {
+      changeWorld("Applied custom color", (w) => {
+        if (s.type === "province") {
+          const p = w.provinces.find((p) => p.id === s.id);
+          if (p) {
+            requireUnlocked(p.layerId);
+            const id = rulerId(w, p.countryId);
+            w.countries.find((c) => c.id === id)!.color = paintColor;
+          }
+        } else if (s.type === "land") {
+          const l = w.lands.find((l) => l.id === s.id);
+          if (l) {
+            requireUnlocked(l.layerId);
+            l.color = paintColor;
+          }
+        } else {
+          const f = w.features.find((f) => f.id === s.id);
+          if (f) {
+            requireUnlocked(f.layerId);
+            if (f.kind === "image")
+              throw new Error(
+                "Choose a vector symbol to recolor; images keep their original colors.",
+              );
+            f.color = paintColor;
+          }
+        }
+        return w;
+      });
+      setSelected([s]);
+      setSelectedCountry(null);
+      return;
+    }
+    if (s && tool === "assign") {
+      changeWorld("Assigned territory to realm", (w) => {
+        const owner = brushCountry || w.countries[0]?.id;
+        if (!owner) throw new Error("Create a country first.");
+        if (s.type === "province") {
+          const p = w.provinces.find((p) => p.id === s.id);
+          if (p) requireUnlocked(p.layerId);
+          return transferProvinces(w, [s.id], owner);
+        }
+        if (s.type === "land") {
+          const land = w.lands.find((l) => l.id === s.id);
+          if (!land) return w;
+          let g = land.geometry;
+          if (w.provinces.length)
+            g = difference(g, union(...w.provinces.map((p) => p.geometry)));
+          if (!g.length)
+            throw new Error(
+              "This land is already assigned. Click a province to change its owner.",
+            );
+          return drawTerritory(w, g, owner);
+        }
+        throw new Error("Choose a province or a landmass to assign territory.");
+      });
+      return;
+    }
     if (tool === "erase" && s) {
       setSelected([s]);
       change("Erased object", (p) => {
@@ -646,7 +791,24 @@ export default function App() {
         : [],
     );
   };
-  const onDraw = (drawTool: Tool, points: Point[]) => {
+  const onDraw = (
+    drawTool: Tool,
+    points: Point[],
+    diameter = brushDiameter,
+  ) => {
+    setSelectedCountry(null);
+    if (drawTool === "brush" || drawTool === "land-erase") {
+      changeWorld(
+        drawTool === "brush" ? "Painted land" : "Erased land",
+        (w) => {
+          const g = strokeGeometry(points, diameter);
+          return drawTool === "brush"
+            ? addLand(w, g, paintColor)
+            : eraseLand(w, g);
+        },
+      );
+      return;
+    }
     if (drawTool === "split") {
       const province = selected.find((s) => s.type === "province");
       if (!province) {
@@ -694,55 +856,21 @@ export default function App() {
           const error = validateGeometry(geometry);
           if (error) throw new Error(error);
           if (drawTool === "territory") {
-            if (!w.countries.length)
-              throw new Error(
-                "Create a country before drawing its territories.",
-              );
-            if (!w.lands.length)
-              throw new Error(
-                "Draw a landmass first, then add a political territory.",
-              );
-            geometry = intersect(
+            const next = drawTerritory(
+              w,
               geometry,
-              union(...w.lands.map((l) => l.geometry)),
+              brushCountry || selectedCountry || w.countries[0]?.id || "",
             );
-            if (w.provinces.length)
-              geometry = difference(
-                geometry,
-                union(...w.provinces.map((p) => p.geometry)),
-              );
-            if (area(geometry) < 1)
-              throw new Error(
-                "There is no unassigned land inside this boundary. Split an existing province to divide it.",
-              );
-            const id = uid();
-            w.provinces.push({
-              id,
-              name: `Province ${w.provinces.length + 1}`,
-              geometry,
-              countryId: selectedCountry || w.countries[0]?.id || "",
-              layerId: "political",
-              claims: [],
-              notes: "",
-            });
-            setSelected([{ type: "province", id }]);
-          } else {
-            if (
-              w.lands.some((l) => area(intersect(geometry, l.geometry)) > 0.05)
-            )
-              throw new Error(
-                "This land overlaps an existing coastline. Draw on the ocean or edit its vertices.",
-              );
-            const id = uid();
-            w.lands.push({
-              id,
-              name: `Landmass ${w.lands.length + 1}`,
-              geometry,
-              layerId: "land",
-            });
-            setSelected([{ type: "land", id }]);
+            setSelected([{ type: "province", id: next.provinces.at(-1)!.id }]);
+            return next;
           }
-          return w;
+          const next = addLand(
+            w,
+            geometry,
+            colorChosen ? paintColor : undefined,
+          );
+          setSelected([{ type: "land", id: next.lands.at(-1)!.id }]);
+          return next;
         },
       );
       return;
@@ -797,9 +925,10 @@ export default function App() {
         kind,
         points: pts,
         layerId,
-        size: brushSize,
-        color:
-          kind === "river"
+        size: brushSize * displayScale(w),
+        color: colorChosen
+          ? paintColor
+          : kind === "river"
             ? "#688e94"
             : kind === "biome"
               ? "#b5a877"
@@ -811,6 +940,7 @@ export default function App() {
           "",
       }));
       w.features.push(...features);
+      features.forEach((f) => growCanvas(w, [[f.points]]));
       if (["city", "castle", "label"].includes(kind))
         setSelected([{ type: "feature", id: features[0].id }]);
       return w;
@@ -818,7 +948,8 @@ export default function App() {
   };
   const onVertex = (s: Selected, from: Point, to: Point) =>
     changeWorld("Reshaped boundary", (w) => {
-      if (s.type === "province") return moveSharedVertex(w, s.id, from, to);
+      if (s.type === "province")
+        return growCanvas(moveSharedVertex(w, s.id, from, to), [[[to]]]);
       const land = w.lands.find((l) => l.id === s.id);
       if (!land) return w;
       requireUnlocked(land.layerId);
@@ -828,7 +959,8 @@ export default function App() {
           .flat(2)
           .some((v) => Math.hypot(v[0] - from[0], v[1] - from[1]) < 0.01),
       );
-      if (shared) return moveSharedVertex(w, shared.id, from, to);
+      if (shared)
+        return growCanvas(moveSharedVertex(w, shared.id, from, to), [[[to]]]);
       land.geometry.forEach((poly) =>
         poly.forEach((r) =>
           r.forEach((v) => {
@@ -849,7 +981,7 @@ export default function App() {
         )
       )
         throw new Error("This coastline would overlap another landmass.");
-      return w;
+      return growCanvas(w, land.geometry);
     });
   const onMove = (s: Selected, dx: number, dy: number) =>
     changeWorld("Moved map feature", (w) => {
@@ -857,6 +989,7 @@ export default function App() {
       if (f) {
         requireUnlocked(f.layerId);
         f.points = f.points.map((p) => [p[0] + dx, p[1] + dy]);
+        growCanvas(w, [[f.points]]);
       }
       return w;
     });
@@ -875,6 +1008,14 @@ export default function App() {
       ? world.features.find((p) => p.id === selected[0].id)
       : null;
   const country = world.countries.find((c) => c.id === selectedCountry);
+  const countryMembers = country
+    ? descendants(world, country.id)
+    : new Set<string>();
+  const dissolutionReceiver =
+    world.countries.find((c) => c.id === dissolveTarget && c.id !== country?.id)
+      ?.id ||
+    world.countries.find((c) => c.id !== country?.id)?.id ||
+    "";
   const updateObject = (key: string, value: unknown) =>
     changeWorld(`Updated ${key}`, (w) => {
       const s = selected[0];
@@ -999,6 +1140,14 @@ export default function App() {
         setSelectedCountry(null);
         setTool("select");
       }
+      if (!advanced && e.key.toLowerCase() === "b") {
+        setTool("brush");
+        return;
+      }
+      if (!advanced && e.key.toLowerCase() === "e") {
+        setTool("land-erase");
+        return;
+      }
       const match = allTools.find(
         (t) => t.key?.toLowerCase() === e.key.toLowerCase(),
       );
@@ -1006,7 +1155,15 @@ export default function App() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [modal, inputDialog, confirmDialog, selected, deleteSelection, project]);
+  }, [
+    modal,
+    inputDialog,
+    confirmDialog,
+    selected,
+    deleteSelection,
+    project,
+    advanced,
+  ]);
   const importFile = async (file: File) => {
     try {
       if (file.size > 32 * 1024 * 1024)
@@ -1168,12 +1325,19 @@ export default function App() {
       }
       const view =
         exportView === "world"
-          ? [0, 0, 1200, 820]
-          : world.views.find((v) => v.id === exportView)?.bounds || [
-              0, 0, 1200, 820,
-            ];
+          ? canvasBounds(world)
+          : world.views.find((v) => v.id === exportView)?.bounds ||
+            canvasBounds(world);
       const w = view[2] - view[0],
         h = view[3] - view[1];
+      if (
+        ["png", "pdf"].includes(exportFormat) &&
+        (Math.ceil(w * exportScale) * Math.ceil(h * exportScale) > 32000000 ||
+          Math.max(w, h) * exportScale > 16384)
+      )
+        throw new Error(
+          "This raster export is too large for a browser canvas. Choose SVG or a lower resolution.",
+        );
       const container = document.createElement("div");
       document.body.appendChild(container);
       const root = createRoot(container);
@@ -1194,7 +1358,7 @@ export default function App() {
       if (transparent) {
         node.querySelectorAll("rect").forEach((r) => {
           if (
-            r.getAttribute("x") === "-10000" ||
+            r.getAttribute("data-map-background") === "ocean" ||
             ["url(#sea-lines)", "url(#paper-grain)", "url(#map-grid)"].includes(
               r.getAttribute("fill") || "",
             )
@@ -1292,6 +1456,12 @@ export default function App() {
       },
     })),
     {
+      name: "Custom canvas, colors & borders",
+      category: "World",
+      icon: Settings2,
+      action: () => setModal("custom"),
+    },
+    {
       name: "New world",
       category: "Project",
       icon: FilePlus2,
@@ -1325,7 +1495,7 @@ export default function App() {
   const guide = [
     {
       title: "A world that belongs to you",
-      text: "This is an editable atlas. Explore its countries, move a city, or start a blank world from the project menu.",
+      text: "Start a blank world at any size. In Simple mode, use the labeled tools: paint land, fill a country, and place cities. The canvas can grow while you draw.",
       tool: "select" as Tool,
     },
     {
@@ -1386,6 +1556,11 @@ export default function App() {
                     name: "Rename project",
                     icon: Pencil,
                     action: renameProject,
+                  },
+                  {
+                    name: "Canvas, colors & borders",
+                    icon: Settings2,
+                    action: () => setModal("custom"),
                   },
                   { name: "Save project", icon: Save, action: manualSave },
                   {
@@ -1555,6 +1730,20 @@ export default function App() {
           </span>
         </div>
         <div className="toolbar-right">
+          <select
+            className="political-view-select"
+            aria-label="Political view"
+            value={world.politicalView || "countries"}
+            onChange={(e) =>
+              changeWorld("Changed political hierarchy view", (w) => ({
+                ...w,
+                politicalView: e.target.value as World["politicalView"],
+              }))
+            }
+          >
+            <option value="countries">Countries</option>
+            <option value="empires">Empires & realms</option>
+          </select>
           <button
             className={`mode-button ${!advanced ? "active" : ""}`}
             onClick={() => setAdvanced(!advanced)}
@@ -1581,6 +1770,35 @@ export default function App() {
           </button>
         </div>
       </div>
+      {!advanced && (
+        <PaintRibbon
+          tool={tool}
+          onTool={setTool}
+          color={paintColor}
+          onColor={(c) => {
+            setPaintColor(c);
+            setColorChosen(true);
+          }}
+          diameter={brushDiameter}
+          onDiameter={setBrushDiameter}
+          world={world}
+          ownerId={brushCountry}
+          onOwner={setBrushCountry}
+          onCountry={() => {
+            setNewGovernment("Kingdom");
+            setNewCountry("My new country");
+            setNewMembers([]);
+            setModal("country");
+          }}
+          onEmpire={() => {
+            setNewGovernment("Empire");
+            setNewCountry("My new empire");
+            setNewMembers([]);
+            setModal("country");
+          }}
+          onSettings={() => setModal("custom")}
+        />
+      )}
       <main className="workspace">
         {leftOpen && (
           <aside className="left-panel">
@@ -1987,44 +2205,48 @@ export default function App() {
             </button>
           </aside>
         )}
-        <nav className="drawing-toolbar" aria-label="Drawing tools">
-          {toolGroups.map((group, i) => (
-            <div className="tool-group" key={i}>
-              {group
-                .filter(
-                  (t) =>
-                    advanced ||
-                    !["vertex", "split", "rectangle", "erase"].includes(t.tool),
-                )
-                .map((t) => (
-                  <button
-                    key={t.tool}
-                    className={`tool-button ${tool === t.tool ? "active" : ""}`}
-                    aria-label={t.name}
-                    aria-pressed={tool === t.tool}
-                    title={`${t.name}${t.key ? ` (${t.key})` : ""}`}
-                    onClick={() => setTool(t.tool)}
-                  >
-                    <t.icon size={18} />
-                    <span className="tool-tooltip">
-                      {t.name}
-                      {t.key && <kbd>{t.key}</kbd>}
-                    </span>
-                  </button>
-                ))}
+        {advanced && (
+          <nav className="drawing-toolbar" aria-label="Drawing tools">
+            {toolGroups.map((group, i) => (
+              <div className="tool-group" key={i}>
+                {group
+                  .filter(
+                    (t) =>
+                      advanced ||
+                      !["vertex", "split", "rectangle", "erase"].includes(
+                        t.tool,
+                      ),
+                  )
+                  .map((t) => (
+                    <button
+                      key={t.tool}
+                      className={`tool-button ${tool === t.tool ? "active" : ""}`}
+                      aria-label={t.name}
+                      aria-pressed={tool === t.tool}
+                      title={`${t.name}${t.key ? ` (${t.key})` : ""}`}
+                      onClick={() => setTool(t.tool)}
+                    >
+                      <t.icon size={18} />
+                      <span className="tool-tooltip">
+                        {t.name}
+                        {t.key && <kbd>{t.key}</kbd>}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            ))}
+            <div className="tool-bottom">
+              <button
+                className="tool-button"
+                title="Draw an elliptical island"
+                aria-label="Ellipse land"
+                onClick={() => setTool("ellipse")}
+              >
+                <CircleIsland />
+              </button>
             </div>
-          ))}
-          <div className="tool-bottom">
-            <button
-              className="tool-button"
-              title="Draw an elliptical island"
-              aria-label="Ellipse land"
-              onClick={() => setTool("ellipse")}
-            >
-              <CircleIsland />
-            </button>
-          </div>
-        </nav>
+          </nav>
+        )}
         <div className="canvas-column">
           <div className="canvas-context">
             <div>
@@ -2079,12 +2301,15 @@ export default function App() {
             )}
           </div>
           <MapCanvas
+            key={project.id}
             ref={svgRef}
             world={world}
             title={project.name}
             tool={tool}
             selected={selected}
             brushSize={brushSize}
+            brushDiameter={brushDiameter}
+            paintColor={paintColor}
             viewBounds={
               activeView === "world"
                 ? null
@@ -2113,6 +2338,29 @@ export default function App() {
             onMove={onMove}
             onCoordinates={setCoordinates}
           />
+          {!world.lands.length &&
+            !world.features.length &&
+            tool === "select" && (
+              <div className="empty-canvas">
+                <Brush />
+                <h2>Your world starts here.</h2>
+                <p>
+                  Paint some land. Give it a country.
+                  <br />
+                  Add a city and a story. You can change everything later.
+                </p>
+                <div>
+                  <button onClick={() => setTool("brush")}>
+                    <Brush size={15} />
+                    Start painting
+                  </button>
+                  <button onClick={() => setModal("custom")}>
+                    <Settings2 size={15} />
+                    Choose my colors
+                  </button>
+                </div>
+              </div>
+            )}
           {comparison && (
             <div className="compare-banner">
               <HistoryIcon size={14} />
@@ -2136,7 +2384,27 @@ export default function App() {
                   ? "COUNTRY PROPERTIES"
                   : "WORLD PROPERTIES"}
             </span>
-            <Settings2 size={14} />
+            {selectedObject || country ? (
+              <button
+                className="icon-button"
+                aria-label="Close properties"
+                title="Close properties"
+                onClick={() => {
+                  setSelected([]);
+                  setSelectedCountry(null);
+                }}
+              >
+                <X size={14} />
+              </button>
+            ) : (
+              <button
+                className="icon-button"
+                aria-label="Customize world"
+                onClick={() => setModal("custom")}
+              >
+                <Settings2 size={14} />
+              </button>
+            )}
           </div>
           <div className="inspector-scroll">
             {country ? (
@@ -2155,8 +2423,9 @@ export default function App() {
                   <h2>{country.name}</h2>
                   <span>
                     {
-                      world.provinces.filter((p) => p.countryId === country.id)
-                        .length
+                      world.provinces.filter((p) =>
+                        countryMembers.has(p.countryId),
+                      ).length
                     }{" "}
                     provinces in this realm
                   </span>
@@ -2183,6 +2452,23 @@ export default function App() {
                       </div>
                     </Field>
                   </div>
+                  <BorderControls
+                    label="Country border"
+                    border={country.border}
+                    defaults={{
+                      color: theme.borderColor,
+                      width: theme.borderWidth,
+                      pattern: theme.borderPattern,
+                      opacity: theme.borderOpacity,
+                    }}
+                    onChange={(b) => updateCountry("border", b)}
+                  />
+                  <button
+                    className="text-action"
+                    onClick={() => updateCountry("border", undefined)}
+                  >
+                    Use the map's default border style
+                  </button>
                   <Field label="Government">
                     <input
                       value={country.government}
@@ -2248,9 +2534,63 @@ export default function App() {
                   </Field>
                 </section>
                 <section className="inspector-section">
+                  <h3>Member realms</h3>
+                  {world.countries
+                    .filter((c) => c.parentId === country.id)
+                    .map((c) => (
+                      <div className="realm-member-row" key={c.id}>
+                        <button
+                          onClick={() => {
+                            setSelectedCountry(c.id);
+                            setSelected([]);
+                          }}
+                        >
+                          <span
+                            className="mini-swatch"
+                            style={{ background: c.color }}
+                          />
+                          {c.name}
+                        </button>
+                        <button
+                          aria-label={`Release ${c.name}`}
+                          title="Make independent"
+                          onClick={() =>
+                            changeWorld("Released member realm", (w) =>
+                              setRealmParent(w, c.id, country.parentId),
+                            )
+                          }
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  <Field label="Add a member realm">
+                    <select
+                      value=""
+                      onChange={(e) =>
+                        changeWorld("Added member realm", (w) =>
+                          setRealmParent(w, e.target.value, country.id),
+                        )
+                      }
+                    >
+                      <option value="">Choose a country or kingdom...</option>
+                      {world.countries
+                        .filter(
+                          (c) =>
+                            c.id !== country.id &&
+                            c.parentId !== country.id &&
+                            !descendants(world, c.id).has(country.id),
+                        )
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </select>
+                  </Field>
                   <h3>Provinces</h3>
                   {world.provinces
-                    .filter((p) => p.countryId === country.id)
+                    .filter((p) => countryMembers.has(p.countryId))
                     .map((p) => (
                       <button
                         className="province-link"
@@ -2272,25 +2612,9 @@ export default function App() {
                           description: `All provinces of ${country.name} will transfer to ${world.countries.find((c) => c.id === id)?.name}. The operation can be undone.`,
                           action: () =>
                             changeWorld("United countries", (w) => {
-                              w.provinces
-                                .filter((p) => p.countryId === country.id)
-                                .forEach((p) => {
-                                  requireUnlocked(p.layerId);
-                                  p.countryId = id;
-                                });
-                              w.countries = w.countries.filter(
-                                (c) => c.id !== country.id,
-                              );
-                              w.countries.forEach((c) => {
-                                if (c.parentId === country.id) c.parentId = id;
-                              });
-                              w.provinces.forEach((p) => {
-                                p.claims = p.claims.filter(
-                                  (c) => c !== country.id,
-                                );
-                              });
+                              const next = uniteRealms(w, country.id, id);
                               setSelectedCountry(id);
-                              return w;
+                              return next;
                             }),
                         });
                       }}
@@ -2305,6 +2629,49 @@ export default function App() {
                         ))}
                     </select>
                   </Field>
+                  {world.provinces.some((p) => p.countryId === country.id) && (
+                    <Field label="Dissolution receiver">
+                      <select
+                        value={dissolutionReceiver}
+                        onChange={(e) => setDissolveTarget(e.target.value)}
+                      >
+                        {world.countries
+                          .filter((c) => c.id !== country.id)
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                      </select>
+                    </Field>
+                  )}
+                  <button
+                    className="danger-button full"
+                    disabled={
+                      world.countries.length === 1 &&
+                      world.provinces.some((p) => p.countryId === country.id)
+                    }
+                    onClick={() =>
+                      setConfirmDialog({
+                        title: `Dissolve ${country.name}?`,
+                        description:
+                          "Member realms keep their own provinces and are released to the parent realm or become independent. Directly owned provinces go to the selected receiver. Undo restores this change.",
+                        action: () =>
+                          changeWorld("Dissolved realm", (w) => {
+                            const next = dissolveRealm(
+                              w,
+                              country.id,
+                              dissolutionReceiver,
+                            );
+                            setSelectedCountry(null);
+                            return next;
+                          }),
+                      })
+                    }
+                  >
+                    <Trash2 size={13} />
+                    Dissolve realm
+                  </button>
                 </section>
               </>
             ) : selectedObject ? (
@@ -2366,6 +2733,35 @@ export default function App() {
                           map units²
                         </strong>
                       </div>
+                      <BorderControls
+                        label="Province border"
+                        border={province.border}
+                        defaults={{
+                          color: theme.borderColor,
+                          width: theme.provinceBorderWidth,
+                          pattern: theme.borderPattern,
+                          opacity: theme.borderOpacity,
+                        }}
+                        onChange={(b) => updateObject("border", b)}
+                      />
+                      <button
+                        className="text-action"
+                        onClick={() => updateObject("border", undefined)}
+                      >
+                        Use the map's default border style
+                      </button>
+                      {!advanced && (
+                        <div className="action-grid">
+                          <button onClick={() => setTool("vertex")}>
+                            <Spline size={14} />
+                            Edit border
+                          </button>
+                          <button onClick={() => setTool("split")}>
+                            <Scissors size={14} />
+                            Split province
+                          </button>
+                        </div>
+                      )}
                       {advanced && (
                         <>
                           <h3 className="subsection-title">
@@ -2437,13 +2833,12 @@ export default function App() {
                             aria-label="Feature size"
                             type="number"
                             min=".1"
-                            max="10"
                             step=".1"
                             value={feature.size}
                             onChange={(e) =>
                               updateObject(
                                 "size",
-                                Math.max(0.1, Math.min(10, +e.target.value)),
+                                Math.max(0.001, +e.target.value),
                               )
                             }
                           />
@@ -2683,6 +3078,13 @@ export default function App() {
                     <span>MAP APPEARANCE</span>
                     <SlidersHorizontal size={13} />
                   </div>
+                  <button
+                    className="customize-world-button"
+                    onClick={() => setModal("custom")}
+                  >
+                    <Settings2 size={14} />
+                    Canvas, colors & custom borders
+                  </button>
                   <div className="style-choices">
                     {(
                       ["atlas", "political", "parchment", "midnight"] as Style[]
@@ -2874,7 +3276,10 @@ export default function App() {
           <span>X {Math.round(coordinates[0])}</span>
           <span>Y {Math.round(coordinates[1])}</span>
           <span className="status-separator" />
-          <span>1200 × 820 map units</span>
+          <span>
+            {Math.round(canvas.width).toLocaleString()} ×{" "}
+            {Math.round(canvas.height).toLocaleString()} map units
+          </span>
         </div>
         <div>
           <span className="key-hint">
@@ -2921,6 +3326,64 @@ export default function App() {
               placeholder="Give your world a name"
             />
           </Field>
+          {newTemplate !== "sample" && (
+            <div className="new-canvas-options">
+              <div className="field-row">
+                <Field label="World width">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={newWidth}
+                    onChange={(e) => setNewWidth(e.target.value)}
+                  />
+                </Field>
+                <Field label="World height">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={newHeight}
+                    onChange={(e) => setNewHeight(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={newGrow}
+                  onChange={(e) => setNewGrow(e.target.checked)}
+                />
+                Let my canvas grow while I draw
+              </label>
+              <p className="field-note">
+                No preset world size. Start at any dimensions and change them
+                later.
+              </p>
+              {newTemplate === "generate" && (
+                <div className="field-row">
+                  <Field label="Landmasses">
+                    <input
+                      type="number"
+                      min="1"
+                      max="24"
+                      value={newContinents}
+                      onChange={(e) => setNewContinents(+e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Starting countries">
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={newInitialCountries}
+                      onChange={(e) => setNewInitialCountries(+e.target.value)}
+                    />
+                  </Field>
+                </div>
+              )}
+            </div>
+          )}
           <div className="template-options">
             {[
               {
@@ -3126,7 +3589,24 @@ export default function App() {
                   >
                     {[1, 2, 3, 4].map((s) => (
                       <option value={s} key={s}>
-                        {s}× {1200 * s} × {820 * s}
+                        {s}×{" "}
+                        {Math.round(
+                          (exportView === "world"
+                            ? canvas.width
+                            : (world.views.find((v) => v.id === exportView)
+                                ?.bounds[2] || canvas.width) -
+                              (world.views.find((v) => v.id === exportView)
+                                ?.bounds[0] || 0)) * s,
+                        )}{" "}
+                        ×{" "}
+                        {Math.round(
+                          (exportView === "world"
+                            ? canvas.height
+                            : (world.views.find((v) => v.id === exportView)
+                                ?.bounds[3] || canvas.height) -
+                              (world.views.find((v) => v.id === exportView)
+                                ?.bounds[1] || 0)) * s,
+                        )}
                       </option>
                     ))}
                   </select>
@@ -3304,6 +3784,46 @@ export default function App() {
           </div>
         </Dialog>
       )}
+      {modal === "custom" && (
+        <Dialog
+          title="A world entirely your own"
+          subtitle="Custom canvas, custom colors, custom borders. No redrawing required."
+          onClose={() => setModal(null)}
+          wide
+        >
+          <WorldSettings
+            world={world}
+            onAppearance={(patch: MapAppearance) =>
+              changeWorld("Customized map appearance", (w) => ({
+                ...w,
+                appearance: { ...w.appearance, ...patch },
+              }))
+            }
+            onCanvas={(grow) =>
+              changeWorld("Changed canvas expansion", (w) => ({
+                ...w,
+                canvas: { ...canvasSettings(w), grow },
+              }))
+            }
+            onResize={(width, height) =>
+              changeWorld("Resized custom canvas", (w) =>
+                resizeCanvas(w, width, height),
+              )
+            }
+            onFit={() =>
+              changeWorld("Fitted canvas to artwork", fitCanvasToContent)
+            }
+            onWorld={(patch) =>
+              changeWorld("Customized world", (w) => ({ ...w, ...patch }))
+            }
+          />
+          <div className="modal-actions">
+            <button className="primary-button" onClick={() => setModal(null)}>
+              Done
+            </button>
+          </div>
+        </Dialog>
+      )}
       {modal === "country" && (
         <Dialog
           title="Raise a new realm"
@@ -3319,6 +3839,27 @@ export default function App() {
               value={newCountry}
               onChange={(e) => setNewCountry(e.target.value)}
             />
+          </Field>
+          <Field label="Realm type">
+            <input
+              list="realm-types"
+              value={newGovernment}
+              onChange={(e) => setNewGovernment(e.target.value)}
+            />
+            <datalist id="realm-types">
+              {[
+                "Empire",
+                "Kingdom",
+                "Republic",
+                "Federation",
+                "Confederation",
+                "Tribe",
+                "City-state",
+                "Custom realm",
+              ].map((type) => (
+                <option key={type} value={type} />
+              ))}
+            </datalist>
           </Field>
           <Field label="Political color">
             <div className="palette-picker">
@@ -3341,6 +3882,37 @@ export default function App() {
               />
             </div>
           </Field>
+          {["Empire", "Federation", "Confederation"].includes(
+            newGovernment,
+          ) && (
+            <div className="new-realm-members">
+              <h3>Member countries & kingdoms</h3>
+              <p>
+                Members keep their provinces and identity. You can change this
+                hierarchy later.
+              </p>
+              {world.countries.map((c) => (
+                <label key={c.id} className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={newMembers.includes(c.id)}
+                    onChange={(e) =>
+                      setNewMembers(
+                        e.target.checked
+                          ? [...newMembers, c.id]
+                          : newMembers.filter((id) => id !== c.id),
+                      )
+                    }
+                  />
+                  <span
+                    className="mini-swatch"
+                    style={{ background: c.color }}
+                  />
+                  {c.name}
+                </label>
+              ))}
+            </div>
+          )}
           <div className="modal-actions">
             <button className="secondary-button" onClick={() => setModal(null)}>
               Cancel

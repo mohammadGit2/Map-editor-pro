@@ -58,6 +58,28 @@ describe("Netlify HTTP endpoints", () => {
     );
     expect(project.id).not.toBe(b.id);
   });
+  it("generates custom canvas dimensions and chosen starting realms", async () => {
+    const response = await generate(
+      new Request(
+        "http://localhost/api/generate-world?seed=19&width=3600&height=2000&continents=4&countries=7",
+      ),
+    );
+    expect(response.status).toBe(200);
+    const project = validateProject(await response.json());
+    expect(project.world.canvas).toMatchObject({ width: 3600, height: 2000 });
+    expect(project.world.lands.length).toBe(4);
+    expect(project.world.countries.length).toBe(7);
+  });
+  it.each(["width=0", "height=Infinity", "continents=25", "countries=0"])(
+    "rejects invalid generation setting %s",
+    async (setting) => {
+      const response = await generate(
+        new Request(`http://localhost/api/generate-world?${setting}`),
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBeTruthy();
+    },
+  );
   it.each(["-1", "1.5", "4294967296", "NaN", "abc"])(
     "rejects invalid seed %s",
     async (seed) => {

@@ -1,5 +1,5 @@
 import { type Project, validateProject } from "./model";
-import { sampleProject } from "./sample";
+import { proceduralProject, type GenerationOptions } from "./generator";
 
 const requestOptions = (): RequestInit => ({
   signal: AbortSignal.timeout(5000),
@@ -10,9 +10,12 @@ const requestOptions = (): RequestInit => ({
 export async function generateWorld(
   seed: number,
   name: string,
+  options: GenerationOptions = {},
 ): Promise<{ project: Project; source: "server" | "local" }> {
   try {
     const query = new URLSearchParams({ seed: String(seed), name });
+    for (const [key, value] of Object.entries(options))
+      if (value !== undefined) query.set(key, String(value));
     const response = await fetch(
       `/api/generate-world?${query}`,
       requestOptions(),
@@ -22,7 +25,7 @@ export async function generateWorld(
     const project = validateProject(await response.json());
     return { project, source: "server" };
   } catch {
-    const project = sampleProject(seed);
+    const project = proceduralProject(seed, options);
     if (name.trim()) project.name = name.trim();
     return { project, source: "local" };
   }

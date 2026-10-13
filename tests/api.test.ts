@@ -17,10 +17,21 @@ describe("Optional function integration", () => {
   });
   it("generates editable local geography when the endpoint is offline", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Offline")));
-    const result = await generateWorld(8, "Offline world");
+    const result = await generateWorld(8, "Offline world", {
+      width: 7000,
+      height: 4000,
+      continents: 4,
+      countries: 7,
+    });
     expect(result.source).toBe("local");
     expect(result.project.name).toBe("Offline world");
     expect(result.project.world.provinces.length).toBeGreaterThan(0);
+    expect(result.project.world.canvas).toMatchObject({
+      width: 7000,
+      height: 4000,
+    });
+    expect(result.project.world.lands.length).toBe(4);
+    expect(result.project.world.countries.length).toBe(7);
   });
   it("does not trust an invalid server project", async () => {
     vi.stubGlobal(

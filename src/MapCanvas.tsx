@@ -22,53 +22,15 @@ import {
 } from "./model";
 import { FeatureSpatialIndex } from "./spatial";
 
-export const themes = {
-  atlas: {
-    ocean: "#e0e5dc",
-    land: "#e5dfca",
-    ink: "#494d3c",
-    coast: "#72755d",
-    river: "#769b9b",
-    forest: "#657c59",
-    mountain: "#74705a",
-  },
-  political: {
-    ocean: "#dfebed",
-    land: "#f6f3e7",
-    ink: "#39494c",
-    coast: "#7b8d89",
-    river: "#729cb9",
-    forest: "#809a74",
-    mountain: "#84928b",
-  },
-  parchment: {
-    ocean: "#dfd1ad",
-    land: "#ebdfbd",
-    ink: "#665333",
-    coast: "#927854",
-    river: "#8c9984",
-    forest: "#828052",
-    mountain: "#9a8258",
-  },
-  midnight: {
-    ocean: "#233840",
-    land: "#405354",
-    ink: "#d8d9c4",
-    coast: "#9cad9c",
-    river: "#8cb5bd",
-    forest: "#97ad91",
-    mountain: "#bec1a0",
-  },
-  blueprint: {
-    ocean: "#294f65",
-    land: "#4c7483",
-    ink: "#dde9e7",
-    coast: "#beced0",
-    river: "#a1c6d9",
-    forest: "#afc6ba",
-    mountain: "#b5c9d0",
-  },
-};
+export { mapThemes as themes } from "./world";
+import {
+  appearance,
+  canvasBounds,
+  canvasSettings,
+  displayScale,
+  borderDash,
+  rulerId,
+} from "./world";
 const pathLine = (pts: Point[]) => {
   if (pts.length < 3) return `M${pts.map((p) => p.join(",")).join("L")}`;
   let d = `M${pts[0].join(",")}`;
@@ -85,7 +47,7 @@ export function FeatureGlyph({
   world: World;
   selected?: boolean;
 }) {
-  const t = themes[world.style],
+  const t = appearance(world),
     [x, y] = f.points[0];
   const ink = f.color === "#514a3c" ? t.ink : f.color;
   const font = f.font || "Georgia,serif";
@@ -264,10 +226,18 @@ export function MapContent({
   interactive = true,
   comparison,
 }: ContentProps) {
-  const t = themes[world.style];
+  const t = appearance(world);
+  const c = canvasSettings(world),
+    unit = displayScale(world);
   const layer = (id: string) => world.layers.find((l) => l.id === id);
   const select = (s: Selected, e: React.MouseEvent) => {
-    if (tool === "select" || tool === "vertex" || tool === "erase") {
+    if (
+      tool === "select" ||
+      tool === "vertex" ||
+      tool === "erase" ||
+      tool === "paint" ||
+      tool === "assign"
+    ) {
       e.stopPropagation();
       onSelect?.(s, e.shiftKey);
     }
@@ -276,7 +246,8 @@ export function MapContent({
     () =>
       world.countries.map((c) => {
         const territories = world.provinces.filter(
-          (p) => p.countryId === c.id && layer(p.layerId)?.visible,
+          (p) =>
+            rulerId(world, p.countryId) === c.id && layer(p.layerId)?.visible,
         );
         return {
           country: c,
@@ -285,12 +256,13 @@ export function MapContent({
             : [],
         };
       }),
-    [world.countries, world.provinces, world.layers],
+    [world.countries, world.provinces, world.layers, world.politicalView],
   );
   const chosen = new Set(selected.map((s) => s.id));
   const spatial = useMemo(
-    () => new FeatureSpatialIndex(world.features),
-    [world.features],
+    () =>
+      new FeatureSpatialIndex(world.features, Math.max(c.width, c.height) / 12),
+    [world.features, c.width, c.height],
   );
   const visible = useMemo(
     () => (viewportBounds ? spatial.query(viewportBounds) : null),
@@ -360,8 +332,23 @@ export function MapContent({
           <feGaussianBlur stdDeviation="2" />
         </filter>
       </defs>
-      <rect x="-10000" y="-10000" width="20000" height="20000" fill={t.ocean} />
-      <rect width="1200" height="820" fill="url(#sea-lines)" />
+      <rect
+        data-map-background="ocean"
+        x={viewportBounds?.[0] ?? c.x}
+        y={viewportBounds?.[1] ?? c.y}
+        width={viewportBounds ? viewportBounds[2] - viewportBounds[0] : c.width}
+        height={
+          viewportBounds ? viewportBounds[3] - viewportBounds[1] : c.height
+        }
+        fill={t.ocean}
+      />
+      <rect
+        x={c.x}
+        y={c.y}
+        width={c.width}
+        height={c.height}
+        fill="url(#sea-lines)"
+      />
       {world.lands
         .filter((l) => layer(l.layerId)?.visible)
         .map((l) => (
@@ -370,14 +357,14 @@ export function MapContent({
               d={geometryPath(l.geometry)}
               fill="none"
               stroke={t.coast}
-              strokeWidth="11"
+              strokeWidth={11 * unit}
               opacity=".12"
             />
             <path
               d={geometryPath(l.geometry)}
               fill="none"
               stroke={t.coast}
-              strokeWidth="5"
+              strokeWidth={5 * unit}
               opacity=".22"
             />
           </g>
@@ -392,10 +379,10 @@ export function MapContent({
                   key={p.id}
                   data-object={p.id}
                   d={geometryPath(p.geometry)}
-                  fill={t.land}
+                  fill={p.color || t.land}
                   fillRule="evenodd"
                   stroke={chosen.has(p.id) ? "#349a83" : t.coast}
-                  strokeWidth={chosen.has(p.id) ? 2 : 1.2}
+                  strokeWidth={(chosen.has(p.id) ? 2 : t.coastlineWidth) * unit}
                   onClick={(e) => select({ type: "land", id: p.id }, e)}
                   className={interactive ? "map-land" : ""}
                 />
@@ -403,7 +390,9 @@ export function MapContent({
             {world.provinces
               .filter((p) => p.layerId === l.id)
               .map((p) => {
-                const c = world.countries.find((c) => c.id === p.countryId),
+                const country = world.countries.find(
+                    (c) => c.id === rulerId(world, p.countryId),
+                  ),
                   changed =
                     comparison?.provinces.find((q) => q.id === p.id)
                       ?.countryId !== p.countryId;
@@ -412,23 +401,16 @@ export function MapContent({
                     <path
                       data-object={p.id}
                       d={geometryPath(p.geometry)}
-                      fill={
-                        world.style === "parchment"
-                          ? t.land
-                          : c?.color || t.land
+                      fill={country?.color || t.land}
+                      fillOpacity={t.fillOpacity}
+                      stroke={p.border?.color || t.borderColor}
+                      strokeOpacity={p.border?.opacity ?? t.borderOpacity}
+                      strokeWidth={
+                        (p.border?.width ?? t.provinceBorderWidth) * unit
                       }
-                      fillOpacity={
-                        world.style === "midnight" ||
-                        world.style === "blueprint"
-                          ? ".5"
-                          : world.style === "atlas"
-                            ? ".63"
-                            : "1"
-                      }
-                      stroke={t.ink}
-                      strokeOpacity=".36"
-                      strokeWidth=".7"
-                      strokeDasharray="2 1.7"
+                      strokeDasharray={borderDash(
+                        p.border?.pattern ?? t.borderPattern,
+                      )}
                       fillRule="evenodd"
                       onClick={(e) => select({ type: "province", id: p.id }, e)}
                       className={interactive ? "map-province" : ""}
@@ -488,9 +470,10 @@ export function MapContent({
             <path
               d={geometryPath(g)}
               fill="none"
-              stroke={t.ink}
-              strokeWidth="1.1"
-              strokeOpacity=".55"
+              stroke={c.border?.color || t.borderColor}
+              strokeWidth={(c.border?.width ?? t.borderWidth) * unit}
+              strokeOpacity={c.border?.opacity ?? t.borderOpacity}
+              strokeDasharray={borderDash(c.border?.pattern ?? t.borderPattern)}
             />
             {layer("labels")?.visible &&
               (() => {
@@ -508,11 +491,11 @@ export function MapContent({
                 return (
                   <text
                     x={x}
-                    y={y - 10}
+                    y={y - 10 * unit}
                     textAnchor="middle"
                     fontFamily="Georgia,serif"
-                    fontSize={small ? 12 : 15}
-                    letterSpacing={small ? 2 : 3}
+                    fontSize={(small ? 12 : 15) * unit}
+                    letterSpacing={(small ? 2 : 3) * unit}
                     fill={t.ink}
                     opacity={layer("labels")?.opacity}
                     paintOrder="stroke"
@@ -521,7 +504,7 @@ export function MapContent({
                     strokeWidth="2.5"
                   >
                     {lines.map((line, i) => (
-                      <tspan key={i} x={x} dy={i === 0 ? 0 : 21}>
+                      <tspan key={i} x={x} dy={i === 0 ? 0 : 21 * unit}>
                         {line}
                       </tspan>
                     ))}
@@ -547,21 +530,31 @@ export function MapContent({
           ) : null;
         })}
       <rect
-        width="1200"
-        height="820"
+        x={c.x}
+        y={c.y}
+        width={c.width}
+        height={c.height}
         fill="url(#paper-grain)"
         pointerEvents="none"
       />
       {world.grid && (
         <rect
-          width="1200"
-          height="820"
+          x={c.x}
+          y={c.y}
+          width={c.width}
+          height={c.height}
           fill="url(#map-grid)"
           pointerEvents="none"
         />
       )}
       {world.decorations && (
-        <g fill={t.ink} stroke={t.ink} pointerEvents="none" opacity=".8">
+        <g
+          transform={`translate(${c.x} ${c.y}) scale(${c.width / 1200} ${c.height / 820})`}
+          fill={t.ink}
+          stroke={t.ink}
+          pointerEvents="none"
+          opacity=".8"
+        >
           <rect
             x="71"
             y="74"
@@ -700,10 +693,12 @@ interface Props {
   tool: Tool;
   selected: Selected[];
   brushSize: number;
+  brushDiameter: number;
+  paintColor: string;
   viewBounds: [number, number, number, number] | null;
   comparison: World | null;
   onSelect: (s: Selected | null, shift?: boolean) => void;
-  onDraw: (tool: Tool, points: Point[]) => void;
+  onDraw: (tool: Tool, points: Point[], diameter?: number) => void;
   onVertex: (selected: Selected, from: Point, to: Point) => void;
   onVertexAction: (action: "insert" | "remove", point: Point) => void;
   onMove: (selected: Selected, dx: number, dy: number) => void;
@@ -718,6 +713,11 @@ type Drag = {
   points: Point[];
 };
 const instructions: Partial<Record<Tool, string>> = {
+  brush: "Drag to paint land. Paint over a coast to expand it.",
+  "land-erase": "Drag to erase land and its borders together.",
+  paint: "Click land, a country, or a symbol to apply your chosen color.",
+  assign:
+    "Click a province or unassigned land to give it to your chosen realm.",
   land: "Drag to draw a coastline. Release to create land.",
   territory: "Click to place boundary points · Enter or double-click to finish",
   split: "Click two points to divide the selected province",
@@ -743,6 +743,8 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
     tool,
     selected,
     brushSize,
+    brushDiameter,
+    paintColor,
     viewBounds,
     comparison,
     onSelect,
@@ -756,7 +758,12 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
 ) {
   const svg = useRef<SVGSVGElement | null>(null),
     box = useRef<HTMLDivElement>(null);
-  const [viewport, setViewport] = useState([0, 0, 1200, 820]);
+  const [viewport, setViewport] = useState(() => {
+    const b = canvasBounds(world);
+    return [b[0], b[1], b[2] - b[0], b[3] - b[1]];
+  });
+  const cb = canvasBounds(world);
+  const [cursor, setCursor] = useState<Point | null>(null);
   const [size, setSize] = useState([1000, 700]);
   const [draft, setDraft] = useState<Point[]>([]),
     drag = useRef<Drag | null>(null);
@@ -769,7 +776,7 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
     if (box.current) observer.observe(box.current);
     return () => observer.disconnect();
   }, []);
-  const fit = (b: [number, number, number, number] = [0, 0, 1200, 820]) => {
+  const fit = (b: [number, number, number, number] = cb) => {
     const aspect = size[0] / size[1],
       w = b[2] - b[0],
       h = b[3] - b[1];
@@ -778,8 +785,8 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
     setViewport([(b[0] + b[2] - vw) / 2, (b[1] + b[3] - vh) / 2, vw, vh]);
   };
   useEffect(() => {
-    fit(viewBounds || [0, 0, 1200, 820]);
-  }, [viewBounds, size[0], size[1]]); // Resize retains an entire linked view.
+    fit(viewBounds || cb);
+  }, [viewBounds, size[0], size[1], cb[0], cb[1], cb[2], cb[3]]); // Resize retains an entire linked view.
   useEffect(() => {
     setDraft([]);
   }, [tool]);
@@ -823,14 +830,15 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
   const zoom = (factor: number, at?: Point) =>
     setViewport((v) => {
       const p = at || [v[0] + v[2] / 2, v[1] + v[3] / 2],
-        newW = Math.min(6000, Math.max(100, v[2] * factor)),
+        newW = Math.max(0.1, v[2] * factor),
         f = newW / v[2];
-      return [
+      const next: [number, number, number, number] = [
         p[0] - (p[0] - v[0]) * f,
         p[1] - (p[1] - v[1]) * f,
         newW,
         v[3] * f,
       ];
+      return next.every(Number.isFinite) ? next : v;
     });
   useEffect(() => {
     const el = svg.current;
@@ -912,7 +920,7 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
       if (nearest) onVertexAction("insert", nearest);
       return;
     }
-    if (tool === "erase") return;
+    if (["erase", "paint", "assign"].includes(tool)) return;
     if (tool === "territory") {
       setDraft((d) => [...d, p]);
       return;
@@ -936,6 +944,7 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
   const pointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     const p = location(e);
     onCoordinates(p);
+    if (["brush", "land-erase"].includes(tool)) setCursor(p);
     const d = drag.current;
     if (!d) return;
     if (d.type === "pan" && d.view) {
@@ -963,7 +972,9 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
       const distance = Math.hypot(p[0] - d.last[0], p[1] - d.last[1]);
       const threshold = ["mountain", "forest"].includes(tool)
         ? brushSize * 14
-        : 3;
+        : ["brush", "land-erase"].includes(tool)
+          ? ((brushDiameter * viewport[2]) / size[0]) * 0.18
+          : (3 * viewport[2]) / size[0];
       if (distance > threshold) {
         d.points.push(p);
         d.last = p;
@@ -979,6 +990,7 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
       onDraw(
         tool,
         ["rectangle", "ellipse"].includes(tool) ? [d.start, d.last] : d.points,
+        (brushDiameter * viewport[2]) / size[0],
       );
       setDraft([]);
     }
@@ -1014,7 +1026,7 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
         <MapIcon size={12} />
         <span>World map</span>
         <span className="breadcrumb-slash">/</span>
-        <span>Aurelia</span>
+        <span>{title}</span>
       </div>
       <svg
         ref={(el) => {
@@ -1029,6 +1041,7 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
         preserveAspectRatio="none"
         onPointerDown={pointerDown}
         onPointerMove={pointerMove}
+        onPointerLeave={() => setCursor(null)}
         onPointerUp={pointerUp}
         onPointerCancel={() => {
           drag.current = null;
@@ -1065,7 +1078,32 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
           tool={tool}
           comparison={comparison}
         />
-        {draft.length > 0 && (
+        {cursor && ["brush", "land-erase"].includes(tool) && (
+          <circle
+            cx={cursor[0]}
+            cy={cursor[1]}
+            r={(brushDiameter * viewport[2]) / size[0] / 2}
+            fill={tool === "land-erase" ? "#d18e6930" : paintColor + "30"}
+            stroke={tool === "land-erase" ? "#b87351" : "#587b50"}
+            strokeWidth={viewport[2] / size[0]}
+            pointerEvents="none"
+          />
+        )}
+        {draft.length > 0 && ["brush", "land-erase"].includes(tool) && (
+          <path
+            d={"M" + draft.map((p) => p.join(",")).join("L")}
+            fill="none"
+            stroke={
+              tool === "land-erase" ? appearance(world).ocean : paintColor
+            }
+            strokeWidth={(brushDiameter * viewport[2]) / size[0]}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity=".7"
+            pointerEvents="none"
+          />
+        )}
+        {draft.length > 0 && !["brush", "land-erase"].includes(tool) && (
           <g
             pointerEvents="none"
             stroke="#327c68"
@@ -1158,6 +1196,17 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
           <kbd>Esc</kbd>
         </div>
       )}
+      {tool === "territory" && draft.length >= 3 && (
+        <button
+          className="finish-border"
+          onClick={() => {
+            onDraw(tool, draft);
+            setDraft([]);
+          }}
+        >
+          Finish border ✓
+        </button>
+      )}
       <div className="canvas-bottom">
         <div className="canvas-attribution">
           <Compass size={13} />
@@ -1167,14 +1216,14 @@ const MapCanvas = forwardRef<SVGSVGElement, Props>(function MapCanvas(
           <button title="Zoom out" onClick={() => zoom(1.2)}>
             <Minus size={15} />
           </button>
-          <span>{Math.round((1200 / viewport[2]) * 100)}%</span>
+          <span>{Math.round(((cb[2] - cb[0]) / viewport[2]) * 100)}%</span>
           <button title="Zoom in" onClick={() => zoom(0.8)}>
             <Plus size={15} />
           </button>
           <i />
           <button
             title="Fit map to canvas"
-            onClick={() => fit(viewBounds || [0, 0, 1200, 820])}
+            onClick={() => fit(viewBounds || cb)}
           >
             <Maximize size={15} />
           </button>

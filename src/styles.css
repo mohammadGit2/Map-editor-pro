@@ -2646,3 +2646,406 @@ kbd {
     width: 40px;
   }
 }
+.paint-ribbon {
+  flex: none;
+  background: #2b362e;
+  border-bottom: 1px solid #526046;
+  padding: 8px 16px 7px;
+  z-index: 11;
+}
+.paint-ribbon-tools {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #5a6e48 transparent;
+  padding-bottom: 7px;
+}
+.paint-ribbon-tools button {
+  flex: none;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 60px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 9px;
+  color: #b7c8a7;
+}
+.paint-ribbon-tools button.active {
+  background: #4a5f3b;
+  border-color: #7e9565;
+  color: #e2edcf;
+}
+.paint-ribbon-tools button:hover {
+  background: #3e5033;
+}
+.paint-ribbon-options {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding-top: 7px;
+  border-top: 1px solid #48553d;
+  font-size: 10px;
+  flex-wrap: wrap;
+}
+.paint-colors {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.paint-colors > button {
+  width: 18px;
+  height: 18px;
+  border: 1px solid #b9c6a640;
+  border-radius: 2px;
+}
+.paint-colors > button.active {
+  outline: 1px solid #e1edc9;
+  outline-offset: 2px;
+}
+.ribbon-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: #b4c4a2;
+  margin-right: 7px;
+}
+.ribbon-color input {
+  width: 22px;
+  height: 22px;
+}
+.ribbon-size {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  color: #a9bd95;
+}
+.ribbon-size input {
+  width: 48px;
+  padding: 4px;
+  font-size: 10px;
+}
+.ribbon-owner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  color: #c5d8a9;
+}
+.ribbon-owner select {
+  padding: 5px;
+  font-size: 10px;
+  max-width: 195px;
+  background: #263623;
+}
+.ribbon-action {
+  font-size: 9px;
+  color: #bfd4a3;
+  padding: 5px 7px;
+  border: 1px solid #536842;
+  border-radius: 3px;
+  background: #32462b;
+}
+.ribbon-action:last-child {
+  margin-left: auto;
+}
+.world-settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 30px;
+}
+.world-settings-grid > section {
+  min-width: 0;
+}
+.world-settings-grid h3 {
+  font-family: var(--serif);
+  font-size: 25px;
+  font-weight: 400;
+  color: #e0ecc8;
+  margin-bottom: 10px;
+}
+.world-settings-grid p,
+.new-realm-members p {
+  font-size: 10px;
+  line-height: 1.8;
+  color: #a7bd91;
+  margin-bottom: 17px;
+}
+.world-settings-grid .checkbox-row {
+  margin-top: 18px;
+  line-height: 1.5;
+}
+.world-settings-grid .field-note {
+  font-size: 9px;
+  margin-top: 10px;
+}
+.custom-color-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 13px;
+}
+.custom-color-grid .color-input {
+  font-size: 9px;
+  gap: 7px;
+  padding: 5px 7px;
+}
+.custom-color-grid .color-input span {
+  font-size: 9px;
+}
+.custom-border-controls {
+  margin-top: 17px;
+}
+.custom-border-controls .field-row {
+  margin-bottom: 0;
+}
+.custom-border-controls input[type="range"] {
+  margin-top: 7px;
+}
+.new-canvas-options {
+  border: 1px solid #536c41;
+  border-radius: 5px;
+  background: #293e26;
+  padding: 15px 15px 0;
+  margin-top: 12px;
+}
+.new-canvas-options .checkbox-row {
+  font-size: 10px;
+}
+.new-realm-members {
+  border: 1px solid #5f7948;
+  padding: 15px;
+  border-radius: 4px;
+  max-height: 235px;
+  overflow: auto;
+  margin-top: 15px;
+}
+.new-realm-members h3 {
+  font-size: 12px;
+  color: #d9e7bd;
+  margin-bottom: 8px;
+}
+.new-realm-members .checkbox-row {
+  margin-top: 11px;
+  font-size: 10px;
+}
+.realm-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  border-bottom: 1px solid #485e37;
+  padding: 8px 0;
+  color: #c0d4a5;
+  font-size: 10px;
+}
+.realm-member-row button {
+  justify-content: flex-start;
+  padding: 0;
+}
+.realm-member-row > button:last-child {
+  padding: 3px;
+  color: #9ab57a;
+}
+.customize-world-button {
+  background: #384a30;
+  border: 1px solid #66824e;
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 11px 8px;
+  color: #cbdcb4;
+  width: 100%;
+  margin-bottom: 18px;
+}
+.finish-border {
+  position: absolute;
+  bottom: 102px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #bed69d;
+  color: #293d20;
+  padding: 10px 15px;
+  border-radius: 4px;
+  border: 1px solid #e0edc9;
+  font-size: 11px;
+  box-shadow: 0 3px 12px #0002;
+}
+.political-view-select {
+  font-size: 9px;
+  width: 125px;
+  padding: 4px;
+  background: #263724;
+  border-color: #4c633b;
+  color: #c1d3a5;
+}
+.tool-brush > svg,
+.tool-land-erase > svg {
+  cursor: crosshair;
+}
+.tool-paint > svg,
+.tool-assign > svg {
+  cursor: cell;
+}
+.empty-canvas {
+  position: absolute;
+  top: calc(50% + 20px);
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 13px;
+  text-align: center;
+  max-width: 380px;
+  min-width: 260px;
+  color: #708262;
+  pointer-events: none;
+}
+.empty-canvas > svg {
+  width: 42px;
+  height: 42px;
+  color: #849b73;
+}
+.empty-canvas h2 {
+  font-family: var(--serif);
+  font-size: 38px;
+  font-weight: 400;
+  color: #586c49;
+}
+.empty-canvas p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #7f9270;
+}
+.empty-canvas > div {
+  display: flex;
+  gap: 8px;
+  margin-top: 5px;
+  pointer-events: auto;
+}
+.empty-canvas button {
+  font-size: 11px;
+  border: 1px solid #95ad7e;
+  background: #d1dfbd;
+  color: #416031;
+  border-radius: 4px;
+  padding: 10px 15px;
+}
+.drawing-toolbar {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.tool-tooltip {
+  display: none !important;
+}
+@media (max-width: 1100px) {
+  .paint-ribbon {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .ribbon-action:last-child {
+    margin-left: 0;
+  }
+  .political-view-select {
+    width: 100px;
+  }
+  .paint-ribbon-options {
+    gap: 8px;
+  }
+  .ribbon-owner {
+    max-width: 165px;
+  }
+  .ribbon-owner select {
+    max-width: 145px;
+  }
+  .world-settings-grid {
+    gap: 20px;
+  }
+}
+@media (max-width: 800px) {
+  .paint-ribbon {
+    padding: 5px 8px;
+  }
+  .paint-ribbon-tools {
+    padding-bottom: 5px;
+    gap: 2px;
+  }
+  .paint-ribbon-tools button {
+    min-width: 53px;
+    padding: 5px;
+    font-size: 8px;
+  }
+  .paint-ribbon-tools button > svg {
+    width: 16px;
+    height: 16px;
+  }
+  .paint-ribbon-options {
+    gap: 7px;
+    font-size: 8px;
+    padding-top: 7px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 5px;
+  }
+  .paint-colors > button {
+    width: 15px;
+    height: 15px;
+    flex: none;
+  }
+  .ribbon-owner {
+    min-width: 145px;
+  }
+  .ribbon-size {
+    flex: none;
+  }
+  .ribbon-action {
+    white-space: nowrap;
+    font-size: 8px;
+    flex: none;
+  }
+  .ribbon-color span {
+    display: none;
+  }
+  .world-settings-grid {
+    grid-template-columns: 1fr;
+    gap: 25px;
+  }
+  .world-settings-grid h3 {
+    font-size: 25px;
+  }
+  .political-view-select {
+    width: 83px;
+    font-size: 8px;
+  }
+  .toolbar-right {
+    gap: 3px;
+  }
+  .toolbar-right .icon-button[title="Toggle map grid"] {
+    display: none;
+  }
+  .empty-canvas {
+    min-width: 230px;
+    max-width: 95%;
+    top: 50%;
+  }
+  .empty-canvas h2 {
+    font-size: 31px;
+  }
+  .empty-canvas p {
+    font-size: 10px;
+  }
+  .empty-canvas button {
+    font-size: 9px;
+    padding: 8px 11px;
+  }
+  .custom-color-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .finish-border {
+    font-size: 9px;
+    bottom: 104px;
+  }
+}

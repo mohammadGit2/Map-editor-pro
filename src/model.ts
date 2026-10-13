@@ -19,7 +19,40 @@ export type Tool =
   | "erase"
   | "rectangle"
   | "ellipse"
-  | "biome";
+  | "biome"
+  | "brush"
+  | "land-erase"
+  | "paint"
+  | "assign";
+export interface BorderStyle {
+  color?: string;
+  width?: number;
+  pattern?: "solid" | "dashed" | "dotted";
+  opacity?: number;
+}
+export interface MapAppearance {
+  ocean?: string;
+  land?: string;
+  ink?: string;
+  coast?: string;
+  river?: string;
+  forest?: string;
+  mountain?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  provinceBorderWidth?: number;
+  borderPattern?: "solid" | "dashed" | "dotted";
+  borderOpacity?: number;
+  fillOpacity?: number;
+  coastlineWidth?: number;
+}
+export interface WorldCanvas {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  grow: boolean;
+}
 export type Style =
   | "atlas"
   | "political"
@@ -48,6 +81,7 @@ export interface Land {
   name: string;
   geometry: Geometry;
   layerId: string;
+  color?: string;
 }
 export interface Country {
   id: string;
@@ -59,6 +93,7 @@ export interface Country {
   description: string;
   parentId: string | null;
   labelPosition?: Point;
+  border?: BorderStyle;
 }
 export interface Province {
   id: string;
@@ -68,6 +103,7 @@ export interface Province {
   layerId: string;
   claims: string[];
   notes: string;
+  border?: BorderStyle;
 }
 export interface Feature {
   id: string;
@@ -103,6 +139,9 @@ export interface World {
   grid: boolean;
   decorations: boolean;
   snap?: boolean;
+  canvas?: WorldCanvas;
+  appearance?: MapAppearance;
+  politicalView?: "countries" | "empires";
 }
 export interface Snapshot {
   id: string;
@@ -201,13 +240,19 @@ export function pointInside(p: Point, geometry: Geometry): boolean {
   );
 }
 export function bounds(g: Geometry): [number, number, number, number] {
-  const points = g.flat(2);
-  return [
-    Math.min(...points.map((p) => p[0])),
-    Math.min(...points.map((p) => p[1])),
-    Math.max(...points.map((p) => p[0])),
-    Math.max(...points.map((p) => p[1])),
-  ];
+  let left = Infinity,
+    top = Infinity,
+    right = -Infinity,
+    bottom = -Infinity;
+  for (const poly of g)
+    for (const r of poly)
+      for (const p of r) {
+        left = Math.min(left, p[0]);
+        top = Math.min(top, p[1]);
+        right = Math.max(right, p[0]);
+        bottom = Math.max(bottom, p[1]);
+      }
+  return [left, top, right, bottom];
 }
 export function center(g: Geometry): Point {
   // A polygon's centroid may lie in an ocean bay. Prefer a point in the largest component.
@@ -263,11 +308,7 @@ export function validateGeometry(g: Geometry): string | null {
     for (const r of poly) {
       if (
         r.length < 4 ||
-        r.some(
-          (p) =>
-            p.length !== 2 ||
-            p.some((n) => !Number.isFinite(n) || Math.abs(n) > 1000000),
-        )
+        r.some((p) => p.length !== 2 || p.some((n) => !Number.isFinite(n)))
       )
         return "A polygon needs at least three valid points.";
       if (r[0][0] !== r.at(-1)![0] || r[0][1] !== r.at(-1)![1])
@@ -286,7 +327,11 @@ export function validateGeometry(g: Geometry): string | null {
             return "The boundary crosses itself. Move the crossing points before continuing.";
         }
     }
-  return area(g) < 0.05 ? "The territory is too small to create." : null;
+  return !Number.isFinite(area(g))
+    ? "The coordinates exceed numeric precision. Use smaller coordinate values."
+    : area(g) <= 1e-8
+      ? "The territory needs a measurable area."
+      : null;
 }
 export const intersect = (a: Geometry, b: Geometry): Geometry =>
   polygonClipping.intersection(a, b) as Geometry;
@@ -304,8 +349,19 @@ export function splitGeometry(
     len = Math.hypot(dx, dy);
   if (len < 1)
     throw new Error("Choose two distinct points for the dividing line.");
-  const u: Point = [(dx / len) * 100000, (dy / len) * 100000],
-    v: Point = [(-dy / len) * 100000, (dx / len) * 100000];
+  const box = bounds(g),
+    extent =
+      Math.max(
+        10,
+        ...[
+          [box[0], box[1]],
+          [box[2], box[1]],
+          [box[0], box[3]],
+          [box[2], box[3]],
+        ].map((p) => Math.hypot(p[0] - a[0], p[1] - a[1])),
+      ) * 2;
+  const u: Point = [(dx / len) * extent, (dy / len) * extent],
+    v: Point = [(-dy / len) * extent, (dx / len) * extent];
   const p: Point = [a[0] - u[0], a[1] - u[1]],
     q: Point = [a[0] + u[0], a[1] + u[1]];
   const half = (s: number) =>
@@ -561,7 +617,10 @@ export function moveSharedVertex(
   assertTopology(world, out);
   return out;
 }
-export function blankProject(name = "Untitled world"): Project {
+export function blankProject(
+  name = "Untitled world",
+  options?: Partial<WorldCanvas>,
+): Project {
   return {
     version: 1,
     id: uid(),
@@ -589,12 +648,30 @@ export function blankProject(name = "Untitled world"): Project {
           id: "world",
           name: "World map",
           parentId: null,
-          bounds: [0, 0, 1200, 820],
+          bounds: [
+            options?.x || 0,
+            options?.y || 0,
+            (options?.x || 0) + (options?.width || 1200),
+            (options?.y || 0) + (options?.height || 820),
+          ],
         },
       ],
       style: "atlas",
       grid: false,
       decorations: true,
+      ...(options
+        ? {
+            canvas: {
+              x: 0,
+              y: 0,
+              width: 1200,
+              height: 820,
+              grow: true,
+              ...options,
+            },
+            decorations: false,
+          }
+        : {}),
     },
     snapshots: [],
   };
@@ -646,6 +723,82 @@ export function validateProject(input: unknown): Project {
   )
     throw new Error("This is not a supported Atlas Forge project (version 1).");
   const validateWorld = (w: World) => {
+    const hex = (value: unknown) =>
+      typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+    const border = (b: BorderStyle | undefined) => {
+      if (!b) return;
+      if (
+        (b.color !== undefined && !hex(b.color)) ||
+        (b.width !== undefined && (!Number.isFinite(b.width) || b.width < 0)) ||
+        (b.opacity !== undefined &&
+          (!Number.isFinite(b.opacity) || b.opacity < 0 || b.opacity > 1)) ||
+        (b.pattern !== undefined &&
+          !["solid", "dashed", "dotted"].includes(b.pattern))
+      )
+        throw new Error("Invalid custom border settings.");
+    };
+    if (w.canvas) {
+      const c = w.canvas;
+      if (
+        ![
+          c.x,
+          c.y,
+          c.width,
+          c.height,
+          c.x + c.width,
+          c.y + c.height,
+          c.width * c.height,
+        ].every(Number.isFinite) ||
+        c.width <= 0 ||
+        c.height <= 0 ||
+        typeof c.grow !== "boolean"
+      )
+        throw new Error("Invalid custom canvas dimensions.");
+    }
+    if (w.appearance) {
+      if (typeof w.appearance !== "object" || Array.isArray(w.appearance))
+        throw new Error("Invalid map appearance.");
+      for (const key of [
+        "ocean",
+        "land",
+        "ink",
+        "coast",
+        "river",
+        "forest",
+        "mountain",
+        "borderColor",
+      ] as const)
+        if (w.appearance[key] !== undefined && !hex(w.appearance[key]))
+          throw new Error("Use hexadecimal map colors.");
+      for (const key of [
+        "borderWidth",
+        "provinceBorderWidth",
+        "coastlineWidth",
+      ] as const)
+        if (
+          w.appearance[key] !== undefined &&
+          (!Number.isFinite(w.appearance[key]) || w.appearance[key]! < 0)
+        )
+          throw new Error("Border widths must be positive or zero.");
+      for (const key of ["borderOpacity", "fillOpacity"] as const)
+        if (
+          w.appearance[key] !== undefined &&
+          (!Number.isFinite(w.appearance[key]) ||
+            w.appearance[key]! < 0 ||
+            w.appearance[key]! > 1)
+        )
+          throw new Error("Opacity must be between zero and one.");
+      if (
+        w.appearance.borderPattern !== undefined &&
+        !["solid", "dashed", "dotted"].includes(w.appearance.borderPattern)
+      )
+        throw new Error("Invalid border pattern.");
+    }
+    if (
+      w.politicalView !== undefined &&
+      !["countries", "empires"].includes(w.politicalView)
+    )
+      throw new Error("Invalid political map view.");
     for (const key of [
       "lands",
       "provinces",
@@ -695,8 +848,11 @@ export function validateProject(input: unknown): Project {
         throw new Error("An object refers to a missing layer.");
       const error = validateGeometry(obj.geometry);
       if (error) throw new Error(`${obj.name}: ${error}`);
+      if ("color" in obj && obj.color !== undefined && !hex(obj.color))
+        throw new Error("Invalid land color.");
     }
     for (const c of w.countries) {
+      border(c.border);
       if (
         !/^#[0-9a-fA-F]{6}$/.test(c.color) ||
         ["government", "ruler", "capital", "description"].some(
@@ -714,7 +870,8 @@ export function validateProject(input: unknown): Project {
         ancestor = w.countries.find((a) => a.id === ancestor?.parentId);
       }
     }
-    for (const province of w.provinces)
+    for (const province of w.provinces) {
+      border(province.border);
       if (
         !countryIds.has(province.countryId) ||
         !Array.isArray(province.claims) ||
@@ -722,6 +879,7 @@ export function validateProject(input: unknown): Project {
         typeof province.notes !== "string"
       )
         throw new Error("A territory refers to a missing country.");
+    }
     for (const f of w.features) {
       if (
         !layerSet.has(f.layerId) ||
@@ -743,7 +901,6 @@ export function validateProject(input: unknown): Project {
         ) ||
         !Number.isFinite(f.size) ||
         f.size <= 0 ||
-        f.size > 100 ||
         !Number.isFinite(f.rotation) ||
         !/^#[0-9a-fA-F]{6}$/.test(f.color) ||
         typeof f.notes !== "string" ||

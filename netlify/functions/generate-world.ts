@@ -1,5 +1,5 @@
 import type { NetlifyFunction } from "@netlify/functions";
-import { sampleProject } from "../../src/sample";
+import { proceduralProject, type GenerationOptions } from "../../src/generator";
 import { json, methodNotAllowed } from "../lib/http";
 
 const handler = async function handler(request: Request): Promise<Response> {
@@ -17,9 +17,24 @@ const handler = async function handler(request: Request): Promise<Response> {
       { error: "World names can contain up to 100 characters." },
       400,
     );
-  const project = sampleProject(Number(rawSeed));
-  if (name) project.name = name;
-  return json(project);
+  const options: GenerationOptions = {};
+  for (const key of ["width", "height", "continents", "countries"] as const) {
+    const value = url.searchParams.get(key);
+    if (value !== null) options[key] = Number(value);
+  }
+  try {
+    const project = proceduralProject(Number(rawSeed), options);
+    if (name) project.name = name;
+    return json(project);
+  } catch (error) {
+    return json(
+      {
+        error:
+          error instanceof Error ? error.message : "World generation failed.",
+      },
+      400,
+    );
+  }
 } satisfies NonNullable<NetlifyFunction["fetch"]>;
 
 export default handler;

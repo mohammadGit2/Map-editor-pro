@@ -19,6 +19,16 @@ const feature = (
   notes: "",
 });
 describe("Viewport spatial queries", () => {
+  it("queries very large worlds without iterating empty or unsafe grid cells", () => {
+    const index = new FeatureSpatialIndex([
+      feature("origin", 50, 50),
+      feature("far", 1e20, 1e20),
+    ]);
+    expect(index.query([0, 0, 2e20, 2e20]).size).toBe(2);
+    expect([
+      ...index.query([1e20 - 1e6, 1e20 - 1e6, 1e20 + 1e6, 1e20 + 1e6]),
+    ]).toEqual(["far"]);
+  });
   it("culls distant symbols while retaining symbols crossing the viewport edge", () => {
     const index = new FeatureSpatialIndex([
       feature("inside", 50, 50),

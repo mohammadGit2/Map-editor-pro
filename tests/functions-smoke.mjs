@@ -9,11 +9,15 @@ assert.equal(health.status, 200);
 assert.equal((await health.json()).application, "Atlas Forge");
 
 const world = await request(
-  "generate-world?seed=7&name=Function%20test%20world",
+  "generate-world?seed=7&name=Function%20test%20world&width=3600&height=2000&continents=4&countries=7",
 );
 assert.equal(world.status, 200);
 const project = await world.json();
 assert.equal(project.name, "Function test world");
+assert.equal(project.world.canvas.width, 3600);
+assert.equal(project.world.canvas.height, 2000);
+assert.equal(project.world.lands.length, 4);
+assert.equal(project.world.countries.length, 7);
 assert.ok(project.world.lands.length > 0);
 assert.ok(project.world.provinces.length > 0);
 const validate = await request("validate-project", {
@@ -33,6 +37,7 @@ const rejected = await request("validate-project", {
 assert.equal(rejected.status, 400);
 assert.equal((await rejected.json()).valid, false);
 assert.equal((await request("generate-world?seed=-1")).status, 400);
+assert.equal((await request("generate-world?width=0")).status, 400);
 assert.equal((await request("health", { method: "POST" })).status, 405);
 console.log(
   "Netlify runtime checks passed: health, editable generation, project validation, invalid ownership, seed errors, and methods.",

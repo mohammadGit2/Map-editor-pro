@@ -5,14 +5,14 @@ const overlaps = (a: Bounds, b: Bounds) =>
   a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
 function featureBounds(f: Feature): Bounds {
   if (["river", "road", "biome"].includes(f.kind)) {
-    const xs = f.points.map((p) => p[0]),
-      ys = f.points.map((p) => p[1]);
-    return [
-      Math.min(...xs) - 10,
-      Math.min(...ys) - 10,
-      Math.max(...xs) + 10,
-      Math.max(...ys) + 10,
-    ];
+    const b: Bounds = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [x, y] of f.points) {
+      b[0] = Math.min(b[0], x - 10);
+      b[1] = Math.min(b[1], y - 10);
+      b[2] = Math.max(b[2], x + 10);
+      b[3] = Math.max(b[3], y + 10);
+    }
+    return b;
   }
   const [x, y] = f.points[0];
   const r =
@@ -37,7 +37,10 @@ export class FeatureSpatialIndex {
         x2 = Math.floor(b[2] / cellSize),
         y1 = Math.floor(b[1] / cellSize),
         y2 = Math.floor(b[3] / cellSize);
-      if ((x2 - x1 + 1) * (y2 - y1 + 1) > 1000) {
+      if (
+        ![x1, x2, y1, y2].every(Number.isSafeInteger) ||
+        (x2 - x1 + 1) * (y2 - y1 + 1) > 1000
+      ) {
         this.oversized.push(feature);
         continue;
       }
@@ -52,6 +55,23 @@ export class FeatureSpatialIndex {
   }
   query(view: Bounds): Set<string> {
     const found = new Set<string>();
+    const cellsWide =
+        Math.floor(view[2] / this.cellSize) -
+        Math.floor(view[0] / this.cellSize) +
+        1,
+      cellsHigh =
+        Math.floor(view[3] / this.cellSize) -
+        Math.floor(view[1] / this.cellSize) +
+        1;
+    if (
+      !view
+        .map((v) => Math.floor(v / this.cellSize))
+        .every(Number.isSafeInteger) ||
+      cellsWide * cellsHigh > Math.max(1000, this.cells.size * 4)
+    ) {
+      for (const [id, b] of this.bounds) if (overlaps(b, view)) found.add(id);
+      return found;
+    }
     for (const f of this.oversized)
       if (overlaps(this.bounds.get(f.id)!, view)) found.add(f.id);
     for (
